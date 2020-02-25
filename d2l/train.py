@@ -12,7 +12,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-__all__ = ['evaluate_loss', 'train_ch10', 'train_2d','evaluate_accuracy',
+__all__ = ['evaluate_loss', 'train', 'train_ch10', 'train_2d','evaluate_accuracy',
            'squared_loss', 'grad_clipping', 'sgd', 'train_and_predict_rnn',
            'train_ch3', 'train_ch5','SequenceMask','MaskedSoftmaxCELoss','train_ch7', 'translate_ch7',
            'to_onehot' , 'predict_rnn', 'train_and_predict_rnn_nn', 'predict_rnn_nn',
@@ -37,6 +37,7 @@ def evaluate_accuracy(data_iter, net, device=torch.device('cpu')):
             acc_sum += torch.sum((torch.argmax(net(X), dim=1) == y))
             n += y.shape[0]
     return acc_sum.item()/n
+
 
 def squared_loss(y_hat, y):
     """Squared loss."""
@@ -94,7 +95,7 @@ def train_and_predict_rnn(rnn, get_params, init_rnn_state, num_hiddens,
                     s.detach_()
             inputs = to_onehot(X, len(vocab))
             # outputs is num_steps terms of shape (batch_size, len(vocab))
-            (outputs, state) = rnn(inputs, state, params)
+            (outputs, state) = rnn(inputs, state)
             # After stitching it is (num_steps * batch_size, len(vocab))
             outputs = torch.cat(outputs, dim=0)
             # The shape of Y is (batch_size, num_steps), and then becomes
@@ -120,6 +121,28 @@ def train_and_predict_rnn(rnn, get_params, init_rnn_state, num_hiddens,
                 print(' -',  predict_rnn(prefix, 50, rnn, params,
                                          init_rnn_state, num_hiddens,
                                          vocab, device))
+
+def train(train_iter, test_iter, net, loss, optimizer, device, num_epochs):
+    net = net.to(device)
+    print("training on ", device)
+    batch_count = 0
+    for epoch in range(num_epochs):
+        train_l_sum, train_acc_sum, n, start = 0.0, 0.0, 0, time.time()
+        for X, y in train_iter:
+            X = X.to(device)
+            y = y.to(device)
+            y_hat = net(X)
+            l = loss(y_hat, y)
+            optimizer.zero_grad()
+            l.backward()
+            optimizer.step()
+            train_l_sum += l.cpu().item()
+            train_acc_sum += (y_hat.argmax(dim=1) == y).sum().cpu().item()
+            n += y.shape[0]
+            batch_count += 1
+        test_acc = evaluate_accuracy(test_iter, net)
+        print('epoch %d, loss %.4f, train acc %.3f, test acc %.3f, time %.1f sec'
+              % (epoch + 1, train_l_sum / batch_count, train_acc_sum / n, test_acc, time.time() - start))
 
 def train_ch3(net, train_iter, test_iter, criterion, num_epochs, batch_size, lr=None):
     """Train and evaluate a model with CPU."""
@@ -154,7 +177,6 @@ def train_ch5(net, train_iter, test_iter, criterion, num_epochs, batch_size, dev
         n, start = 0, time.time()
         for X, y in train_iter:
             net.train()
-
             optimizer.zero_grad()
             X, y = X.to(device), y.to(device)
             y_hat = net(X)
